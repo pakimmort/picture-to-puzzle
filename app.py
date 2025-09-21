@@ -1,9 +1,9 @@
 import streamlit as st
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 import numpy as np
 import io
 import math
-import base64
+import random
 
 # Set page configuration
 st.set_page_config(
@@ -22,35 +22,15 @@ st.markdown("""
         text-align: center;
         margin-bottom: 2rem;
     }
-    .style-option {
-        border: 2px solid #ddd;
-        border-radius: 10px;
-        padding: 15px;
-        text-align: center;
-        cursor: pointer;
-        transition: all 0.3s;
-    }
-    .style-option:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 10px 20px rgba(0,0,0,0.1);
-    }
-    .style-option.selected {
-        border-color: #4a6fa5;
-        box-shadow: 0 5px 15px rgba(74, 111, 165, 0.2);
-    }
-    .upload-area {
-        border: 2px dashed #ccc;
-        padding: 40px;
-        text-align: center;
-        border-radius: 10px;
-        background: #fafafa;
-        margin: 20px 0;
-    }
     .stButton>button {
         width: 100%;
         border-radius: 50px;
         padding: 15px;
         font-weight: bold;
+    }
+    .style-btn {
+        width: 100%;
+        margin-bottom: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -130,7 +110,7 @@ if 'puzzle_img' not in st.session_state:
 with st.sidebar:
     st.header("Settings")
     lang_option = st.radio("Language", ["English", "Arabic", "Spanish"], 
-                          index=["English", "Arabic", "Spanish"].index("English"))
+                          index=0)
     
     # Map to language codes
     lang_map = {"English": "en", "Arabic": "ar", "Spanish": "es"}
@@ -156,116 +136,150 @@ st.subheader(t("choose_style"))
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    if st.button(t("original_style"), use_container_width=True):
+    if st.button(t("original_style"), use_container_width=True, key="btn_original"):
         st.session_state.selected_style = "original"
     st.caption(t("original_desc"))
 
 with col2:
-    if st.button(t("cartoon_style"), use_container_width=True):
+    if st.button(t("cartoon_style"), use_container_width=True, key="btn_cartoon"):
         st.session_state.selected_style = "cartoon"
     st.caption(t("cartoon_desc"))
 
 with col3:
-    if st.button(t("3d_style"), use_container_width=True):
+    if st.button(t("3d_style"), use_container_width=True, key="btn_3d"):
         st.session_state.selected_style = "3d"
     st.caption(t("3d_desc"))
+
+# Show selected style
+st.info(f"Selected style: {st.session_state.selected_style}")
 
 # Customization
 st.subheader(t("customize_puzzle"))
 pieces = st.slider(t("piece_count"), 20, 100, 60)
 tab_size = st.slider(t("tab_size"), 15, 40, 25)
 
-# Jigsaw generation functions
-def draw_jigsaw_segment(draw, start, end, fixed_pos, cell_size, amplitude, is_tab, direction):
-    """Draw a jigsaw segment with proper shape"""
-    points = []
-    segment_length = end - start
-    
-    for i in range(0, int(segment_length), 2):
-        pos = start + i
-        normalized = i / segment_length
-        
-        if direction == 'horizontal':
-            if is_tab:
-                if 0.3 <= normalized <= 0.7:
-                    wave = amplitude * math.sin((normalized - 0.3) * math.pi / 0.4)
-                else:
-                    wave = 0
-            else:
-                if 0.3 <= normalized <= 0.7:
-                    wave = -amplitude * math.sin((normalized - 0.3) * math.pi / 0.4)
-                else:
-                    wave = 0
-            points.append((pos, fixed_pos + wave))
-        else:
-            if is_tab:
-                if 0.3 <= normalized <= 0.7:
-                    wave = amplitude * math.sin((normalized - 0.3) * math.pi / 0.4)
-                else:
-                    wave = 0
-            else:
-                if 0.3 <= normalized <= 0.7:
-                    wave = -amplitude * math.sin((normalized - 0.3) * math.pi / 0.4)
-                else:
-                    wave = 0
-            points.append((fixed_pos + wave, pos))
-    
-    if points and len(points) > 1:
-        draw.line(points, fill=(0, 0, 0), width=4)
-
-def create_jigsaw_puzzle(input_image, rows=6, cols=6, tab_size=25):
-    """
-    Create a jigsaw puzzle with proper piece shapes
-    """
-    width, height = input_image.size
-    result = input_image.copy()
+# PROPER Jigsaw generation functions
+def create_jigsaw_cuts(image, rows, cols, tab_size):
+    """Create actual jigsaw puzzle cuts on the image"""
+    width, height = image.size
+    result = image.copy()
     draw = ImageDraw.Draw(result)
     
     cell_width = width / cols
     cell_height = height / rows
     
-    # Draw horizontal cuts (between rows)
+    # Draw horizontal puzzle cuts
     for row in range(1, rows):
         y = row * cell_height
+        points = []
+        
         for col in range(cols):
             x_start = col * cell_width
             x_end = x_start + cell_width
             
-            # Alternate between tab and socket for variety
-            has_tab = (row + col) % 2 == 0
-            draw_jigsaw_segment(draw, x_start, x_end, y, cell_width, tab_size, has_tab, 'horizontal')
+            # Create wave pattern for each cell
+            for x in np.linspace(x_start, x_end, 50):
+                # Normalized position in cell (0 to 1)
+                norm_pos = (x - x_start) / cell_width
+                
+                # Create jigsaw wave pattern
+                if 0.3 <= norm_pos <= 0.7:
+                    # Curved tab shape
+                    wave = tab_size * math.sin((norm_pos - 0.3) * math.pi / 0.4)
+                else:
+                    wave = 0
+                
+                points.append((x, y + wave))
+        
+        # Draw the horizontal cut line
+        if len(points) > 1:
+            draw.line(points, fill=(0, 0, 0), width=4)
     
-    # Draw vertical cuts (between columns)
+    # Draw vertical puzzle cuts
     for col in range(1, cols):
         x = col * cell_width
+        points = []
+        
         for row in range(rows):
             y_start = row * cell_height
             y_end = y_start + cell_height
             
-            # Alternate pattern for vertical cuts
-            has_tab = (row + col) % 3 == 0
-            draw_jigsaw_segment(draw, y_start, y_end, x, cell_height, tab_size, has_tab, 'vertical')
+            # Create wave pattern for each cell
+            for y in np.linspace(y_start, y_end, 50):
+                # Normalized position in cell (0 to 1)
+                norm_pos = (y - y_start) / cell_height
+                
+                # Create jigsaw wave pattern
+                if 0.3 <= norm_pos <= 0.7:
+                    # Curved tab shape
+                    wave = tab_size * math.sin((norm_pos - 0.3) * math.pi / 0.4)
+                else:
+                    wave = 0
+                
+                points.append((x + wave, y))
+        
+        # Draw the vertical cut line
+        if len(points) > 1:
+            draw.line(points, fill=(0, 0, 0), width=4)
     
     return result
 
+def create_puzzle_mask(width, height, rows, cols, tab_size):
+    """Create a puzzle piece mask for more advanced effect"""
+    # Create a white mask
+    mask = Image.new('L', (width, height), 255)
+    draw = ImageDraw.Draw(mask)
+    
+    cell_width = width / cols
+    cell_height = height / rows
+    
+    # Draw puzzle cuts as black lines
+    for row in range(1, rows):
+        y = row * cell_height
+        points = []
+        
+        for x in range(0, width, 2):  # Step by 2px for performance
+            cell_x = (x % cell_width) / cell_width
+            if 0.3 <= cell_x <= 0.7:
+                wave = tab_size * math.sin((cell_x - 0.3) * math.pi / 0.4)
+            else:
+                wave = 0
+            points.append((x, y + wave))
+        
+        if points:
+            draw.line(points, fill=0, width=3)
+    
+    for col in range(1, cols):
+        x = col * cell_width
+        points = []
+        
+        for y in range(0, height, 2):
+            cell_y = (y % cell_height) / cell_height
+            if 0.3 <= cell_y <= 0.7:
+                wave = tab_size * math.sin((cell_y - 0.3) * math.pi / 0.4)
+            else:
+                wave = 0
+            points.append((x + wave, y))
+        
+        if points:
+            draw.line(points, fill=0, width=3)
+    
+    return mask
+
 def apply_style_filter(image, style):
-    """Apply style filter to image (simplified for demo)"""
+    """Apply style filter to image"""
     if style == "original":
         return image
     elif style == "cartoon":
-        # Simple cartoon effect (edge enhancement + color quantization)
-        from PIL import ImageFilter
-        edges = image.filter(ImageFilter.FIND_EDGES)
-        quantized = image.quantize(colors=64)
-        return Image.blend(quantized.convert('RGB'), edges, 0.1)
+        # Simple cartoon effect
+        return image.filter(ImageFilter.SMOOTH_MORE).filter(ImageFilter.EDGE_ENHANCE)
     elif style == "3d":
-        # Simple 3D effect (emboss filter)
-        from PIL import ImageFilter
+        # Simple 3D effect
         return image.filter(ImageFilter.EMBOSS)
     return image
 
 # Generate puzzle button
-if st.button(t("generate_puzzle"), type="primary"):
+if st.button(t("generate_puzzle"), type="primary", key="generate_btn"):
     if st.session_state.uploaded_image is not None:
         with st.spinner("Creating your puzzle..."):
             # Calculate rows and columns
@@ -275,8 +289,8 @@ if st.button(t("generate_puzzle"), type="primary"):
             # Apply selected style
             styled_image = apply_style_filter(st.session_state.uploaded_image, st.session_state.selected_style)
             
-            # Create the jigsaw puzzle
-            st.session_state.puzzle_img = create_jigsaw_puzzle(styled_image, rows, cols, tab_size)
+            # Create the jigsaw puzzle with proper cuts
+            st.session_state.puzzle_img = create_jigsaw_cuts(styled_image, rows, cols, tab_size)
             
         st.success("Puzzle created successfully!")
     else:
@@ -296,5 +310,20 @@ if st.session_state.puzzle_img is not None:
         label=t("download_puzzle"),
         data=byte_im,
         file_name="custom_puzzle.jpg",
-        mime="image/jpeg"
+        mime="image/jpeg",
+        key="download_btn"
     )
+
+# Add some explanation
+with st.expander("How to use"):
+    st.write("""
+    1. Upload your image using the file uploader
+    2. Choose a style for your puzzle (Original, Cartoon, or 3D)
+    3. Adjust the number of pieces and tab size using the sliders
+    4. Click 'Generate Puzzle' to create your custom jigsaw
+    5. Download your puzzle using the download button
+    """)
+
+# Add footer
+st.markdown("---")
+st.caption("Jigsaw Puzzle Creator - Create custom puzzles from your photos")
